@@ -515,7 +515,7 @@ class SpatialFullConvolution[@specialized(Float, Double) T: ClassTag](
   }
 
   override def findModel(paramOffset: Int,
-                         indexes: Array[Int]): (Module[_ <: Activities, _ <: Activities, T], Int, Array[Int]) = {
+    indexes: Array[Int]): (Module[_ <: Activities, _ <: Activities, T], Int, Array[Int]) = {
     (this, paramOffset - nOutputPlane * nInputPlane * kH * kW - nOutputPlane, indexes)
   }
 }

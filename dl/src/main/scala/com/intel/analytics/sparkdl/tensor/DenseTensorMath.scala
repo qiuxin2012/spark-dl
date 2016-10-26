@@ -49,7 +49,7 @@ object DenseTensorMath {
   def cmul[@specialized(Float, Double) T](self: DenseTensor[T], x: Tensor[T], y: Tensor[T])
     (implicit ev: TensorNumeric[T]): Tensor[T] = {
     require(self.nElement() == y.nElement(), "element number doesn't match")
-    if (self.isContiguous() && y.isContiguous() && MKL.isMKLLoaded) {
+    if (self.isContiguous() && x.isContiguous() && y.isContiguous()) {
       ev.vMul(self.nElement(), x.storage().array(), x.storageOffset() - 1,
         y.storage().array(), y.storageOffset() - 1, self.storage().array(), self.storageOffset()
           - 1)
@@ -68,7 +68,7 @@ object DenseTensorMath {
   def cdiv[@specialized(Float, Double) T](self: DenseTensor[T], x: Tensor[T], y: Tensor[T])
     (implicit ev: TensorNumeric[T]): Tensor[T] = {
     require(self.nElement() == y.nElement(), "element number doesn't match")
-    if (self.isContiguous() && y.isContiguous() && MKL.isMKLLoaded) {
+    if (self.isContiguous() && x.isContiguous() && y.isContiguous()) {
       ev.vDiv(self.nElement(), x.storage().array(), x.storageOffset() - 1,
         y.storage().array(), y.storageOffset() - 1, self.storage().array(), self.storageOffset()
           - 1)
@@ -89,7 +89,7 @@ object DenseTensorMath {
     (implicit ev: TensorNumeric[T]): Tensor[T] = {
     require(x != null)
 
-    if (!self.eq(x)) {
+    if (!self.eq(x) && !self.eq(y)) {
       self.resizeAs(x).copy(x)
     }
 
@@ -97,12 +97,13 @@ object DenseTensorMath {
       ev.axpy(y.nElement(), value, y.storage().array(), y.storageOffset() - 1, 1,
         self.storage().array(), self.storageOffset() - 1, 1)
     } else {
-      val func2 = new TensorFunc4[T] {
-        override def apply(data1: Array[T], offset1: Int, data2: Array[T], offset2: Int): Unit = {
-          data1(offset1) = ev.plus(data1(offset1), ev.times(value, data2(offset2)))
+      val func = new TensorFunc6[T] {
+        override def apply(data1: Array[T], offset1: Int, data2: Array[T], offset2: Int,
+                          data3: Array[T], offset3: Int): Unit = {
+          data1(offset1) = ev.plus(data2(offset2), ev.times(value, data3(offset3)))
         }
       }
-      Apply.apply2[T](self, y, func2)
+      Apply.apply3[T](self, x, y, func)
     }
     self
   }

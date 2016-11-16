@@ -70,18 +70,12 @@ class SpatialConvolutionMap[@specialized(Float, Double) T: ClassTag](
   }
 
   override def updateOutput(input: Tensor[T]): Tensor[T] = {
-    var dimw = 3
-    var dimh = 2
-    var dimc = 1
-    var nbatch = 1
     require(input.nDimension() == 3 || input.nDimension() == 4,
       "3D or 4D(batch mode) tensor expected")
-    if (input.nDimension() == 4) {
-      nbatch = input.size(1)
-      dimw += 1
-      dimh += 1
-      dimc += 1
-    }
+    val dimw = if (input.nDimension() == 4) 4 else 3
+    val dimh = if (input.nDimension() == 4) 3 else 2
+    val dimc = if (input.nDimension() == 4) 2 else 1
+    val nbatch = if (input.nDimension() == 4) input.size(1) else 1
     require(input.size(dimc) >= nInputPlane, "invalid number of input planes")
     require(input.size(dimw) >= kW && input.size(dimh) >= kH,
       "input image smaller than kernel size")
@@ -91,8 +85,9 @@ class SpatialConvolutionMap[@specialized(Float, Double) T: ClassTag](
     val outputW = (inputW - kW) / dW + 1
     val outputH = (inputH - kH) / dH + 1
 
+    //force batch
     if (input.nDimension() == 3) {
-      output.resize(Array(nOutputPlane, outputH, outputW))
+      output.resize(Array(1, nOutputPlane, outputH, outputW))
     } else {
       output.resize(Array(input.size(1), nOutputPlane, outputH, outputW))
     }
@@ -141,18 +136,17 @@ class SpatialConvolutionMap[@specialized(Float, Double) T: ClassTag](
       }
       m += 1
     }
+
+   if (input.nDimension() == 3) {
+      output.resize(Array(nOutputPlane, outputH, outputW))
+    }
     output
   }
 
   override def updateGradInput(input: Tensor[T], gradOutput: Tensor[T]): Tensor[T] = {
-    var dimw = 3
-    var dimh = 2
-    var nbatch = 1
-    if (input.nDimension() == 4) {
-      nbatch = input.size(1)
-      dimw += 1
-      dimh += 1
-    }
+    val dimw = if (input.nDimension() == 4) 4 else 3
+    val dimh = if (input.nDimension() == 4) 3 else 2
+    val nbatch = if (input.nDimension() == 4) input.size(1) else 1
 
     val inputW = input.size(dimw)
     val inputH = input.size(dimh)
@@ -203,6 +197,11 @@ class SpatialConvolutionMap[@specialized(Float, Double) T: ClassTag](
     val outputH = gradOutput.size(dimh)
     val weightH = weight.size(2)
     val weightW = weight.size(3)
+
+    //force batch
+    if (gradOutput.nDimension() == 3) {
+      gradOutput.resize(Array(1) ++ gradOutput.size())
+    }
 
     var m = 1
     val gradOutputIndex = new Array[Int](4)
@@ -290,7 +289,7 @@ object SpatialConvolutionMap {
   }
 
   def oneToOne[@specialized(Float, Double) T: ClassTag](nfeat: Int)(
-    implicit ev: TensorNumeric[T]): Unit = {
+    implicit ev: TensorNumeric[T]): Tensor[T] = {
     val ft = Tensor[T](nfeat, 2)
     var i = 1
     while (i <= nfeat) {
@@ -298,6 +297,7 @@ object SpatialConvolutionMap {
       ft(i)(2) = ev.fromType[Int](i)
       i = i + 1
     }
+    ft
   }
 
   def random[@specialized(Float, Double) T: ClassTag](nin: Int, nout: Int, nto: Int)(

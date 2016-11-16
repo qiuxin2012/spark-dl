@@ -742,6 +742,16 @@ object Tensor {
   def expand[T](tensor: Tensor[T], sizes: Int*): Tensor[T] = tensor.expand(sizes.toArray)
 
   /**
+   * return a tensor of sizes filled with 1.
+   * @param sizes
+   * @return a tensor
+   */
+  def ones[@specialized(Float, Double) T: ClassTag](sizes: Int*)(implicit ev: TensorNumeric[T]): Tensor[T] = {
+    val length = sizes.toArray.reduce(_ * _)
+    apply[T](Storage(new Array[T](length)), 1, sizes.toArray).fill(ev.fromType[Int](1))
+  }
+
+  /**
    * This is equivalent to tensor.expandAs(template)
    * @param tensor
    * @param template

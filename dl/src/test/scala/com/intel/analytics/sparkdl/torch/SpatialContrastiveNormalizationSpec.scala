@@ -211,5 +211,41 @@ class SpatialContrastiveNormalizationSpec extends FlatSpec with BeforeAndAfter w
     output should be(luaOutput)
     gradInput should be(luaGradInput)
   }
+
+  "A SpatialContrastiveNormalization 3D input with guass7" should "generate correct output and grad" in {
+    val seed = 100
+    RNG.setSeed(seed)
+
+    val kernel = Tensor.gaussian1D[Double](7)
+
+    val model = new SpatialContrastiveNormalization[Double](1, kernel.clone())
+
+    Random.setSeed(3)
+    val input1 = Tensor[Double](4, 3, 14, 14).apply1(e => Random.nextDouble())
+    val input = input1.narrow(2, 1, 1)
+    val output = model.updateOutput(input)
+
+    val gradOutput = Tensor[Double]().resizeAs(output).apply1(e => Random.nextDouble())
+
+    val gradInput = model.backward(input, gradOutput)
+
+    val code = "torch.manualSeed(" + seed + ")\n" +
+      """model = nn.SpatialContrastiveNormalization(1, kernel)
+      model:zeroGradParameters()
+      output = model:forward(input)
+      gradInput = model:backward(input, gradOutput)
+      """
+
+    val (luaTime, torchResult) = TH.run(code,
+      Map("input" -> input, "gradOutput" -> gradOutput, "kernel" -> kernel),
+      Array("output", "gradInput")
+    )
+
+    val luaOutput = torchResult("output").asInstanceOf[Tensor[Double]]
+    val luaGradInput = torchResult("gradInput").asInstanceOf[Tensor[Double]]
+
+    output should be(luaOutput)
+    gradInput should be(luaGradInput)
+  }
 }
 

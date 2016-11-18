@@ -752,6 +752,102 @@ object Tensor {
   }
 
   /**
+   * Returns a 1D Gaussian kernel of size size, mean mean and standard deviation sigma.
+   * @param size
+   * @param sigma
+   * @param amplitude
+   * @param normalize
+   * @param mean
+   * @param tensor If tensor is set, will discard size, and write result to tensor.
+   * @return
+   */
+  def gaussian1D[@specialized(Float, Double) T: ClassTag](size: Int = 3, sigma: Double = 0.25,
+    amplitude: Int = 1, normalize: Boolean = false, mean: Double = 0.5, tensor: Tensor[T] = null
+    )(implicit ev: TensorNumeric[T]): Tensor[T] = {
+    val gauss = if (null != tensor) {
+      require(tensor.dim() == 1, "expecting 1D tensor")
+      require(tensor.nElement() > 0, "expecting non-empty tensor")
+      tensor
+    } else {
+      Tensor[T](size)
+    }
+    val center = mean * gauss.nElement() + 0.5
+
+    // generate kernel
+    for (i <- 1 to gauss.nElement()) {
+      gauss.setValue(i, ev.fromType[Double](amplitude * math.exp(-(math.pow((i - center)
+        / (sigma * size), 2) / 2)))
+      )
+    }
+    if (normalize) {
+      gauss.div(gauss.sum())
+    }
+    gauss
+  }
+
+  /**
+   * Horizontally flip an image. Src and dst can be the same tensor.
+   * @param src
+   * @param dst
+   * @return dst
+   */
+  def hflip[@specialized(Float, Double) T: ClassTag](src: Tensor[T], dst: Tensor[T]
+    )(implicit ev: TensorNumeric[T]): Tensor[T] = {
+    require(src.dim() == 3 && dst.dim() == 3, "only 3D tensor supported")
+    require(src.size().deep == dst.size().deep, "src and dst should have the same size")
+
+    val width = dst.size(3)
+    val height = dst.size(2)
+    val channels = dst.size(1)
+
+    val is = src.stride()
+    val os = dst.stride()
+    val dstArray = dst.storage().array()
+    val srcArray = dst.storage().array()
+    val dstOffset = dst.storageOffset() - 1
+    val srcOffset = src.storageOffset() - 1
+
+    if (dst != src) {
+      // not in-place
+      var k = 0
+      while (k < channels) {
+        var y = 0
+        while (y < height) {
+          var x = 0
+          while (x < width) {
+            dstArray(dstOffset + k*os(0) + y*os(1) + (width-x-1)*os(2)) =
+              srcArray(srcOffset + k*is(0) + y*is(1) + x*is(2))
+            x += 1
+          }
+          y += 1
+        }
+        k += 1
+      }
+    } else {
+      // in-place
+      val halfWidth = width >> 1
+      var k = 0
+      while (k < channels) {
+        var y = 0
+        while (y < height) {
+          var x = 0
+          while (x < halfWidth) {
+            val swap = dstArray(dstOffset + k*is(0) + y*is(1) + (width-x-1)*is(2))
+            dstArray(dstOffset + k*is(0) + y*is(1) + (width-x-1)*is(2)) =
+              srcArray(srcOffset + k*is(0) + y*is(1) + x*is(2))
+            srcArray(srcOffset + k*is(0) + y*is(1) + x*is(2)) = swap
+            x += 1
+          }
+          y += 1
+        }
+        k += 1
+      }
+    }
+
+    dst
+  }
+
+  /**
    * This is equivalent to tensor.expandAs(template)
    * @param tensor
    * @param template

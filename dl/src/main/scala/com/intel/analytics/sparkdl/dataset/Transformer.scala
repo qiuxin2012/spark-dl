@@ -22,6 +22,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 import com.fasterxml.jackson.databind.ser.std.StdJdkSerializers.AtomicIntegerSerializer
+import com.intel.analytics.sparkdl.nn.SpatialContrastiveNormalization
+import com.intel.analytics.sparkdl.tensor.TensorNumericMath.TensorNumeric
 import com.intel.analytics.sparkdl.tensor.{Storage, Tensor}
 import org.apache.commons.lang3.SerializationUtils
 
@@ -160,8 +162,8 @@ object RGBImageNormalizer {
         sumB += diffB * diffB
         j += 3
       }
-      print(s"Std: $i / $totalCount \r")
       i += 1
+      print(s"Std: $i / $totalCount \r")
     }
     println()
     val stdR = math.sqrt(sumR / total)
@@ -491,5 +493,145 @@ object Identity {
 class Identity[A] extends Transformer[A, A] {
   override def transform(prev: Iterator[A]): Iterator[A] = {
     prev
+  }
+}
+
+object BgrToYuv {
+  def apply(): BgrToYuv = new BgrToYuv()
+
+  //inplace
+  def bgr2yuv(bgr : Tensor[Float]): Unit = {
+    require(bgr.nDimension() == 3 && bgr.size(1) == 3 && bgr.size(2) == bgr.size(3))
+    val pixels = bgr.size(2) * bgr.size(3)
+    val array = bgr.storage().array()
+    val offset = bgr.storageOffset() - 1
+    var i = 0
+    while (i < pixels) {
+      val r = array(offset + i + pixels * 2)
+      val g = array(offset + i + pixels)
+      val b = array(offset + i)
+
+      val y = 0.299f * r + 0.587f * g + 0.114f * b
+      val u = -0.14713f * r - 0.28886f * g + 0.436f * b
+      val v = 0.615f * r - 0.51499f * g - 0.10001f * b
+      array(offset + i) = y
+      array(offset + i + pixels) = u
+      array(offset + i + pixels * 2) = v
+      i = i + 1
+    }
+  }
+}
+
+class BgrToYuv() extends Transformer[(Tensor[Float], Tensor[Float]),
+  (Tensor[Float], Tensor[Float])] {
+
+  override def transform(prev: Iterator[(Tensor[Float], Tensor[Float])]):
+  Iterator[(Tensor[Float], Tensor[Float])] = {
+    prev.map(data => {
+      val images = data._1
+      require(images.dim() == 3 || images.dim() == 4, "image or batch images required")
+      if(images.nDimension() == 4) {
+        val batch = images.size(1)
+        var i = 1
+        while (i <= batch) {
+          BgrToYuv.bgr2yuv(images(i))
+          i += 1
+        }
+      } else {
+        BgrToYuv.bgr2yuv(images)
+      }
+      data
+    })
+  }
+}
+
+object YuvImageNormalizer {
+  def apply(meanU: Float, meanV: Float,
+            stdU: Float, stdV: Float): YuvImageNormalizer = {
+
+    new YuvImageNormalizer(meanU, meanV, stdU, stdV)
+  }
+
+  def apply(dataSource: LocalDataSource[(Tensor[Float], Tensor[Float])], samples: Int = -1): YuvImageNormalizer = {
+    var sumU: Double = 0
+    var sumV: Double = 0
+    var total: Long = 0
+    dataSource.shuffle()
+    dataSource.reset()
+    val totalCount = if (samples < 0) dataSource.total() else samples
+    var i = 0
+    while ((i < samples || samples < 0) && !dataSource.finished()) {
+      val images = dataSource.next()._1
+      val batch = images.size(1)
+      var j = 1
+      while (j <= batch) {
+        sumU += images(j)(2).sum()
+        sumV += images(j)(3).sum()
+        total += images(j)(2).nElement()
+        j += 1
+      }
+      i += batch
+      print(s"Mean: $i / $totalCount \r")
+    }
+    println()
+    require(total > 0)
+    val meanU = sumU / total
+    val meanV = sumV / total
+    sumU = 0
+    sumV = 0
+    i = 0
+    dataSource.reset()
+    while ((i < samples || samples < 0) && !dataSource.finished()) {
+      val images = dataSource.next()._1
+      val batch = images.size(1)
+      var j = 1
+      while (j <= batch) {
+        val image = images(j)
+        val u = image(2)
+        val v = image(3)
+        val index = new Array[Int](2)
+        index(0) = 1
+        while (index(0) <= image.size(2)) {
+          index(1) = 1
+          while (index(1) <= image.size(3)) {
+            val diffU = u(index) - meanU
+            val diffV = v(index) - meanV
+            sumU += diffU * diffU
+            sumV += diffV * diffV
+            index(1) += 1
+          }
+          index(0) += 1
+        }
+        j += 1
+      }
+      i += batch
+      print(s"Std: $i / $totalCount \r")
+    }
+    println()
+    val stdU = math.sqrt(sumU / total)
+    val stdV = math.sqrt(sumV / total)
+    new YuvImageNormalizer(meanU.toFloat, meanV.toFloat, stdU.toFloat, stdV.toFloat)
+  }
+}
+
+class YuvImageNormalizer(meanU: Float, meanV: Float, stdU: Float, stdV: Float)
+  extends Transformer[(Tensor[Float], Tensor[Float]), (Tensor[Float], Tensor[Float])] {
+
+  println(s"meanU:$meanU, meanV:$meanV, stdU:$stdU, stdV:$stdV")
+
+  val yNor = new SpatialContrastiveNormalization[Float](1, Tensor.gaussian1D(7))
+
+  override def transform(prev: Iterator[(Tensor[Float], Tensor[Float])]): Iterator[(Tensor[Float], Tensor[Float])] = {
+    prev.map(data => {
+      val images = data._1
+      val ys = images.narrow(2, 1, 1)
+      val us = images.narrow(2, 2, 1)
+      val vs = images.narrow(2, 3, 1)
+      val o = yNor.forward(ys)
+      us.add(- meanU.toFloat).div(stdU.toFloat)
+      vs.add(- meanV.toFloat).div(stdV.toFloat)
+      ys.copy(o)
+      data
+    })
   }
 }

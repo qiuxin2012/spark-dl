@@ -289,7 +289,7 @@ object SpatialConvolutionMap {
   }
 
   def oneToOne[@specialized(Float, Double) T: ClassTag](nfeat: Int)(
-    implicit ev: TensorNumeric[T]): Unit = {
+    implicit ev: TensorNumeric[T]): Tensor[T] = {
     val ft = Tensor[T](nfeat, 2)
     var i = 1
     while (i <= nfeat) {
@@ -297,6 +297,7 @@ object SpatialConvolutionMap {
       ft(i)(2) = ev.fromType[Int](i)
       i = i + 1
     }
+    ft
   }
 
   def random[@specialized(Float, Double) T: ClassTag](nin: Int, nout: Int, nto: Int)(

@@ -40,42 +40,43 @@ class DLClassifier(override val uid: String)
 
   def setOutputCol(value: String): this.type = set(outputCol, value)
 
-  private def predict(features: Tensor[Float]): Array[Float] = {
-    val result = $(modelTrain).forward(features).toTensor[Float]
-    require(result.dim() == 2)
-
-    var i = 0
-    val res = new Array[Float](result.size(1))
-    while (i < result.size(1)) {
-      val maxVal = result.select(1, i + 1).max(1)._2
-      res(i) = maxVal(Array(1))
-      i += 1
-    }
-    res
-  }
-
   override def transform(dataset: DataFrame): DataFrame = {
     require(null != $(modelTrain), "model for predict must not be null")
     require(null != $(batchSize), "batchSize for predict must not be null")
-    val batchS = $(batchSize)
-    val model = $(modelTrain).evaluate()
+    DLClassifier.transform($(batchSize), $(modelTrain), $(inputCol), $(outputCol), dataset)
+  }
+
+  override def transformSchema(schema: StructType): StructType = schema
+
+  override def copy(extra: ParamMap): DLClassifier = {
+    copyValues(new DLClassifier(uid), extra)
+  }
+}
+
+object  DLClassifier {
+  private[DLClassifier] def transform(
+      batchSize: Array[Int],
+      modelTrain: Module[Float],
+      inputCol: String,
+      outputCol: String,
+      dataset: DataFrame): DataFrame = {
+    val model = modelTrain.evaluate()
 
     val modelBroadCast = dataset.sqlContext.sparkContext.broadcast(model)
 
     val predictRdd = dataset.rdd.mapPartitions{ rows =>
       val result = new ArrayBuffer[Row]()
       val localModel = modelBroadCast.value
-      val tensorBuffer = Tensor[Float](batchS)
-      val batches = rows.grouped(batchS(0))
+      val tensorBuffer = Tensor[Float](batchSize)
+      val batches = rows.grouped(batchSize(0))
 
-      var r = 0
       while (batches.hasNext) {
         val batch = batches.next()
 
         var i = 1
         batch.foreach{ row =>
           tensorBuffer.select(1, i).copy(
-            Tensor(Storage(row.getAs[DenseVector]($(inputCol)).values.map(_.toFloat))))
+            Tensor(Storage(row.getAs[DenseVector](inputCol).values.map(_.toFloat))))
           i += 1
         }
         val output = localModel.forward(tensorBuffer).toTensor[Float]
@@ -92,19 +93,11 @@ class DLClassifier(override val uid: String)
           result.append(Row.fromSeq(row.toSeq ++ Array[Int](predict(i).toInt)))
           i += 1
         }
-        r += batch.length
       }
       result.toIterator
     }
-
-    val predictSchema = dataset.schema.add($(outputCol), IntegerType)
+    val predictSchema = dataset.schema.add(outputCol, IntegerType)
     dataset.sqlContext.createDataFrame(predictRdd, predictSchema)
-  }
-
-  override def transformSchema(schema: StructType): StructType = schema
-
-  override def copy(extra: ParamMap): DLClassifier = {
-    copyValues(new DLClassifier(uid), extra)
   }
 }
 
